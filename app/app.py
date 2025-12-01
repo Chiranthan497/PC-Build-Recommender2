@@ -2,6 +2,7 @@ import reflex as rx
 from app.state import PCBuilderState
 from app.components.form import builder_form
 from app.components.result import result_display
+from app.components.demo import demo_page
 
 
 def hero_section() -> rx.Component:
@@ -93,3 +94,4 @@ app = rx.App(
     ],
 )
 app.add_page(index, route="/")
+app.add_page(demo_page, route="/demo")

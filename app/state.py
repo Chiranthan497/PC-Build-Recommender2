@@ -31,6 +31,49 @@ class PCBuilderState(rx.State):
     full_explanation: str = ""
     recommendation: dict[str, Component] = {}
     error_message: str = ""
+    demo_output: str = ""
+    is_demo_streaming: bool = False
+
+    @rx.var
+    def masked_api_key(self) -> str:
+        key = os.getenv("GOOGLE_API_KEY", "")
+        if not key:
+            return "Not Configured ❌"
+        if key.startswith("AIza"):
+            return f"{key[:8]}...{key[-4:]} ✅"
+        return "Configured (Unknown Format) ✅"
+
+    @rx.event
+    def start_demo_stream(self):
+        self.is_demo_streaming = True
+        self.demo_output = ""
+        yield
+        try:
+            api_key = os.getenv("GOOGLE_API_KEY")
+            if not api_key:
+                self.demo_output = (
+                    "Error: GOOGLE_API_KEY not found. Cannot demonstrate live API call."
+                )
+                self.is_demo_streaming = False
+                return
+            client = genai.Client(api_key=api_key)
+            prompt = "Explain briefly (in about 40 words) why building a custom PC is better than buying pre-built. Be enthusiastic!"
+            response_stream = client.models.generate_content_stream(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.7, max_output_tokens=200
+                ),
+            )
+            for chunk in response_stream:
+                if chunk.text:
+                    self.demo_output += chunk.text
+                    yield
+        except Exception as e:
+            logging.exception(f"Error during demo stream: {e}")
+            self.demo_output = f"API Error during demo: {str(e)}"
+        finally:
+            self.is_demo_streaming = False
 
     @rx.event
     def set_budget(self, value: str):
