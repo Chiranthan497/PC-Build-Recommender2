@@ -173,6 +173,11 @@ class PCBuilderState(rx.State):
         self.stream_complete = False
         yield
         time.sleep(1.0)
+        if self.budget < 40000:
+            self.is_loading = False
+            self.error_message = "Minimum budget for a custom PC build is ₹40,000. Please increase your budget."
+            yield rx.toast.error(self.error_message)
+            return
         try:
             recommendation = get_recommendation_from_db(
                 self.budget, self.use_cases, self.other_requirements
@@ -203,6 +208,8 @@ class PCBuilderState(rx.State):
         yield
         try:
             api_key = os.getenv("GOOGLE_API_KEY")
+            if not api_key:
+                raise ValueError("No Google API Key configured.")
             client = genai.Client(api_key=api_key)
             build_str = """
 """.join([f"{k}: {v['name']} - {v['spec']}" for k, v in self.recommendation.items()])
@@ -225,11 +232,23 @@ class PCBuilderState(rx.State):
             )
         except Exception as e:
             logging.exception(f"Gemini API Error: {e}")
+            error_msg = str(e)
+            if (
+                "429" in error_msg
+                or "quota" in error_msg.lower()
+                or "RESOURCE_EXHAUSTED" in error_msg
+            ):
+                yield rx.toast.warning(
+                    "AI usage quota exceeded (Free Tier). Switching to Rule-Based Expert Analysis...",
+                    duration=5000,
+                )
+            else:
+                yield rx.toast.error(
+                    f"AI connection failed. Switching to Rule-Based Expert Analysis.",
+                    duration=5000,
+                )
             self.streaming_text = ""
             self.full_explanation = self._generate_comprehensive_explanation()
-            yield rx.toast.error(
-                "AI service unavailable, switching to standard analysis."
-            )
             yield PCBuilderState.stream_simulated_explanation
 
     @rx.event
