@@ -1,4 +1,7 @@
 import reflex as rx
+import os
+from google import genai
+from google.genai import types
 from app.database import (
     get_recommendation_from_db,
     get_budget_tier,
@@ -169,16 +172,20 @@ class PCBuilderState(rx.State):
         self.is_streaming = False
         self.stream_complete = False
         yield
-        time.sleep(1.5)
+        time.sleep(1.0)
         try:
             recommendation = get_recommendation_from_db(
                 self.budget, self.use_cases, self.other_requirements
             )
             if recommendation:
                 self.recommendation = recommendation
-                self.full_explanation = self._generate_comprehensive_explanation()
                 self.is_loading = False
-                yield PCBuilderState.stream_explanation
+                api_key = os.getenv("GOOGLE_API_KEY")
+                if api_key:
+                    yield PCBuilderState.stream_gemini_analysis
+                else:
+                    self.full_explanation = self._generate_comprehensive_explanation()
+                    yield PCBuilderState.stream_simulated_explanation
             else:
                 self.error_message = "Unable to find a suitable build within your specified budget and requirements. Please try adjusting your budget or requirements."
                 yield rx.toast.error(self.error_message)
@@ -190,7 +197,43 @@ class PCBuilderState(rx.State):
             yield rx.toast.error(self.error_message)
 
     @rx.event
-    def stream_explanation(self):
+    def stream_gemini_analysis(self):
+        self.is_streaming = True
+        self.streaming_text = ""
+        yield
+        try:
+            api_key = os.getenv("GOOGLE_API_KEY")
+            client = genai.Client(api_key=api_key)
+            build_str = """
+""".join([f"{k}: {v['name']} - {v['spec']}" for k, v in self.recommendation.items()])
+            prompt = f"\n            Act as a professional PC Builder AI Expert. \n            I have selected the following components for a user with these requirements:\n            \n            Budget: ₹{self.budget:,}\n            Use Cases: {', '.join(self.use_cases)}\n            Other Requirements: {self.other_requirements or 'None'}\n            \n            Selected Build Components:\n            {build_str}\n            \n            Please provide a comprehensive, professional analysis of this PC build.\n            Structure your response in clean Markdown.\n            \n            You MUST include these specific sections:\n            1. **Build Strengths & Focus**: Analyze how this specific configuration fits the user's stated use cases.\n            2. **Important Considerations**: Mention any potential bottlenecks, caveats, or things the user should know.\n            3. **Future Upgrade Recommendations**: Suggest logical next steps for upgrading this specific rig.\n            4. **Detailed Component Analysis**: Briefly explain why these specific parts work well together (synergy between CPU/GPU/RAM).\n            \n            Keep the tone professional, helpful, and enthusiastic. Mention specific performance expectations (FPS estimates, rendering speeds, etc.) relevant to the use cases.\n            Do NOT suggest changing the components I provided unless there is a critical incompatibility. Focus on analyzing the *given* build.\n            "
+            response_stream = client.models.generate_content_stream(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.7, max_output_tokens=1000
+                ),
+            )
+            for chunk in response_stream:
+                if chunk.text:
+                    self.streaming_text += chunk.text
+                    yield
+            self.stream_complete = True
+            self.is_streaming = False
+            yield rx.toast.success(
+                "AI analysis complete! Your custom PC configuration is ready."
+            )
+        except Exception as e:
+            logging.exception(f"Gemini API Error: {e}")
+            self.streaming_text = ""
+            self.full_explanation = self._generate_comprehensive_explanation()
+            yield rx.toast.error(
+                "AI service unavailable, switching to standard analysis."
+            )
+            yield PCBuilderState.stream_simulated_explanation
+
+    @rx.event
+    def stream_simulated_explanation(self):
         self.is_streaming = True
         self.streaming_text = ""
         yield
