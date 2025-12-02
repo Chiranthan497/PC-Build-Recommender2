@@ -1,11 +1,11 @@
 import reflex as rx
 import os
 from google import genai
-from google.genai import types
 from app.database import (
     get_recommendation_from_db,
     get_budget_tier,
     get_use_case_priority,
+    extract_gpu_preference,
     Component,
 )
 import time
@@ -59,11 +59,7 @@ class PCBuilderState(rx.State):
             client = genai.Client(api_key=api_key)
             prompt = "Explain briefly (in about 40 words) why building a custom PC is better than buying pre-built. Be enthusiastic!"
             response_stream = client.models.generate_content_stream(
-                model="gemini-2.5-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.7, max_output_tokens=200
-                ),
+                model="gemini-2.5-flash", contents=prompt
             )
             for chunk in response_stream:
                 if chunk.text:
@@ -197,12 +193,19 @@ class PCBuilderState(rx.State):
             performance_section += """• Fast code compilation and build processes
 • Smooth IDE performance with multiple projects
 """
+        requested_gpu = extract_gpu_preference(self.other_requirements)
+        gpu_note = ""
+        if requested_gpu:
+            current_gpu = self.recommendation.get("GPU", {}).get("name", "")
+            if requested_gpu != current_gpu:
+                gpu_note = f"\n---\n**⚠️ Note Regarding Your Request for {requested_gpu}:**\nWe noticed you requested an {requested_gpu}, but it was not selected for this build. This is likely because including it would have exceeded your budget of ₹{self.budget:,} or compromised the quality of other essential components like the CPU or Power Supply. The selected {current_gpu} offers the best possible performance within your specified budget.\n"
         return (
             intro
             + """
 """.join(details)
             + compatibility_section
             + performance_section
+            + gpu_note
         )
 
     @rx.event
@@ -256,25 +259,55 @@ class PCBuilderState(rx.State):
             client = genai.Client(api_key=api_key)
             build_str = """
 """.join([f"{k}: {v['name']} - {v['spec']}" for k, v in self.recommendation.items()])
-            prompt = f"\n            Act as a professional PC Builder AI Expert. \n            I have selected the following components for a user with these requirements:\n            \n            Budget: ₹{self.budget:,}\n            Use Cases: {', '.join(self.use_cases)}\n            Other Requirements: {self.other_requirements or 'None'}\n            \n            Selected Build Components:\n            {build_str}\n            \n            Please provide a comprehensive, professional analysis of this PC build.\n            Structure your response in clean Markdown.\n            \n            You MUST include these specific sections:\n            1. **Build Strengths & Focus**: Analyze how this specific configuration fits the user's stated use cases.\n            2. **Important Considerations**: Mention any potential bottlenecks, caveats, or things the user should know.\n            3. **Future Upgrade Recommendations**: Suggest logical next steps for upgrading this specific rig.\n            4. **Detailed Component Analysis**: Briefly explain why these specific parts work well together (synergy between CPU/GPU/RAM).\n            \n            Keep the tone professional, helpful, and enthusiastic. Mention specific performance expectations (FPS estimates, rendering speeds, etc.) relevant to the use cases.\n            Do NOT suggest changing the components I provided unless there is a critical incompatibility. Focus on analyzing the *given* build.\n            "
-            response_stream = client.models.generate_content_stream(
-                model="gemini-2.5-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.7, max_output_tokens=1000
-                ),
-            )
-            for chunk in response_stream:
-                if chunk.text:
-                    self.streaming_text += chunk.text
-                    yield
+            prompt = f"\n            Act as a professional PC Builder AI Expert.\n            I have selected the following components for a user with these requirements:\n            \n            Budget: ₹{self.budget:,}\n            Use Cases: {', '.join(self.use_cases)}\n            Other Requirements: {self.other_requirements or 'None'}\n            \n            Selected Build Components:\n            {build_str}\n            \n            Please provide a comprehensive, professional analysis of this PC build.\n            Structure your response in clean Markdown.\n            \n            You MUST include these specific sections:\n            1. **Build Strengths & Focus**: Analyze how this specific configuration fits the user's stated use cases.\n            2. **Important Considerations**: Mention any potential bottlenecks, caveats, or things the user should know. \n               CRITICAL: If the user requested a specific GPU in 'Other Requirements' but it is NOT in the 'Selected Build Components', explain politely that it didn't fit within the ₹{self.budget:,} budget while maintaining a balanced system, and explain why the selected GPU is the best alternative. If the user requested GPU IS selected, mention that you've prioritized their preference.\n            3. **Future Upgrade Recommendations**: Suggest logical next steps for upgrading this specific rig.\n            4. **Detailed Component Analysis**: Briefly explain why these specific parts work well together (synergy between CPU/GPU/RAM).\n            \n            Keep the tone professional, helpful, and enthusiastic. Mention specific performance expectations (FPS estimates, rendering speeds, etc.) relevant to the use cases.\n            Focus on analyzing the *given* build, justifying the choices made by the builder algorithm.\n            "
+            streaming_succeeded = False
+            try:
+                response_stream = client.models.generate_content_stream(
+                    model="gemini-2.5-flash", contents=prompt
+                )
+                chunk_count = 0
+                for chunk in response_stream:
+                    if chunk.text:
+                        self.streaming_text += chunk.text
+                        chunk_count += 1
+                        yield
+                if chunk_count > 0:
+                    streaming_succeeded = True
+                else:
+                    logging.warning(
+                        "Gemini Streaming returned 0 chunks. Trying non-streaming fallback."
+                    )
+            except Exception as stream_err:
+                logging.exception(
+                    f"Gemini Streaming failed: {stream_err}. Trying non-streaming fallback."
+                )
+            if not streaming_succeeded:
+                logging.info("Executing non-streaming fallback request to Gemini...")
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash", contents=prompt
+                )
+                if response.text:
+                    full_response_text = response.text
+                    self.streaming_text = ""
+                    words = full_response_text.split(" ")
+                    for i, word in enumerate(words):
+                        self.streaming_text += word + " "
+                        if i % 3 == 0:
+                            yield
+                        time.sleep(0.01)
+                    streaming_succeeded = True
+                else:
+                    logging.error("Gemini Non-Streaming also returned empty text.")
+                    raise ValueError(
+                        "Empty response from AI model (both streaming and non-streaming)"
+                    )
             self.stream_complete = True
             self.is_streaming = False
             yield rx.toast.success(
                 "AI analysis complete! Your custom PC configuration is ready."
             )
         except Exception as e:
-            logging.exception(f"Gemini API Error: {e}")
+            logging.exception(f"Gemini API Error (All attempts failed): {e}")
             error_msg = str(e)
             if (
                 "429" in error_msg

@@ -324,6 +324,38 @@ gpus: dict[str, list[Component]] = {
             "spec": "16GB GDDR6X VRAM",
             "reasoning": "One of the most powerful GPUs on the market, crushing 4K gaming with ray tracing enabled. A premium choice for enthusiasts.",
         },
+        {
+            "name": "NVIDIA GeForce RTX 5070",
+            "price": 75000,
+            "tier": 2,
+            "compatibility_key": 700,
+            "spec": "12GB GDDR7 VRAM",
+            "reasoning": "Next-gen performance for 1440p gaming, offering a massive leap in ray tracing and AI capabilities over the 40-series.",
+        },
+        {
+            "name": "NVIDIA GeForce RTX 5070 Ti",
+            "price": 95000,
+            "tier": 3,
+            "compatibility_key": 750,
+            "spec": "16GB GDDR7 VRAM",
+            "reasoning": "The new sweet spot for high-refresh 1440p and entry 4K, featuring the latest Blackwell architecture innovations.",
+        },
+        {
+            "name": "NVIDIA GeForce RTX 5080",
+            "price": 135000,
+            "tier": 3,
+            "compatibility_key": 850,
+            "spec": "16GB GDDR7 VRAM",
+            "reasoning": "A monster 4K gaming GPU that brings unparalleled ray tracing performance and DLSS 4 capabilities.",
+        },
+        {
+            "name": "NVIDIA GeForce RTX 5090",
+            "price": 225000,
+            "tier": 3,
+            "compatibility_key": 1000,
+            "spec": "32GB GDDR7 VRAM",
+            "reasoning": "The ultimate GPU. Period. Crushes everything at 4K/8K and professional rendering workloads. Requires a massive PSU.",
+        },
     ],
     "AMD": [
         {
@@ -556,6 +588,37 @@ def get_use_case_priority(use_cases: list[str]) -> str:
     return "Balanced"
 
 
+def extract_gpu_preference(text: str) -> Optional[str]:
+    if not text:
+        return None
+    text = text.lower()
+    mappings = {
+        "5090": "NVIDIA GeForce RTX 5090",
+        "5080": "NVIDIA GeForce RTX 5080",
+        "5070 ti": "NVIDIA GeForce RTX 5070 Ti",
+        "5070": "NVIDIA GeForce RTX 5070",
+        "4090": "NVIDIA GeForce RTX 4090",
+        "4080": "NVIDIA GeForce RTX 4080 SUPER",
+        "4070 ti": "NVIDIA GeForce RTX 4070 Ti SUPER",
+        "4070": "NVIDIA GeForce RTX 4070 SUPER",
+        "4060 ti": "NVIDIA GeForce RTX 4060 Ti 8GB",
+        "4060": "NVIDIA GeForce RTX 4060 8GB",
+        "3060": "NVIDIA GeForce RTX 3060 12GB",
+        "1650": "NVIDIA GeForce GTX 1650",
+        "7900 xtx": "AMD Radeon RX 7900 XTX 24GB",
+        "7900 xt": "AMD Radeon RX 7900 XT 20GB",
+        "7800": "AMD Radeon RX 7800 XT 16GB",
+        "7700": "AMD Radeon RX 7700 XT 12GB",
+        "7600": "AMD Radeon RX 7600",
+        "6750": "AMD Radeon RX 6750 XT 12GB",
+        "6600": "AMD Radeon RX 6600 8GB",
+    }
+    for key in sorted(mappings.keys(), key=len, reverse=True):
+        if key in text:
+            return mappings[key]
+    return None
+
+
 def _get_component_price(component: Component) -> int:
     return component["price"]
 
@@ -617,6 +680,33 @@ def get_recommendation_from_db(
         total_min_cost -= min_costs["GPU"]
     surplus = max(0, budget - total_min_cost)
     logger.info(f"Min Cost: ₹{total_min_cost:,}, Surplus: ₹{surplus:,}")
+    pref_gpu_name = extract_gpu_preference(other_reqs)
+    forced_gpu = None
+    if pref_gpu_name:
+        all_gpus_flat = gpus["NVIDIA"] + gpus["AMD"]
+        candidate = next((g for g in all_gpus_flat if g["name"] == pref_gpu_name), None)
+        if candidate:
+            base_system_min_cost = total_min_cost - min_costs["GPU"]
+            strict_min_cost = base_system_min_cost
+            if candidate["tier"] >= 3:
+                strict_min_cost += 15000
+            elif candidate["tier"] == 2:
+                strict_min_cost += 8000
+            remaining_budget = budget - candidate["price"]
+            if remaining_budget >= strict_min_cost:
+                forced_gpu = candidate
+                logger.info(
+                    f"User preference honored (Balanced): Locking {forced_gpu['name']} (₹{forced_gpu['price']:,})"
+                )
+            elif remaining_budget >= base_system_min_cost:
+                forced_gpu = candidate
+                logger.info(
+                    f"User preference honored (Tight Budget): Locking {forced_gpu['name']} (₹{forced_gpu['price']:,}) - Squeezing other components"
+                )
+            else:
+                logger.warning(
+                    f"User requested {pref_gpu_name} but budget ₹{budget:,} is insufficient (Need ~₹{candidate['price'] + base_system_min_cost:,})"
+                )
     allocations = {
         "GPU_Heavy": {
             "CPU": 0.2,
@@ -657,10 +747,25 @@ def get_recommendation_from_db(
     }[priority]
     flexibility = 1.25 if tier == 1 else 1.1
     comp_budgets = {}
-    for key, weight in allocations.items():
-        base = 0 if key == "GPU" and skip_gpu_calc else min_costs.get(key, 0)
-        comp_budgets[key] = base + surplus * weight
-        logger.debug(f"Allocated {key}: ₹{comp_budgets[key]:,.2f}")
+    if forced_gpu:
+        gpu_cost = forced_gpu["price"]
+        remaining_for_others = budget - gpu_cost
+        other_components = [k for k in allocations.keys() if k != "GPU"]
+        total_other_weight = sum((allocations[k] for k in other_components))
+        comp_budgets["GPU"] = gpu_cost
+        for key in other_components:
+            normalized_weight = allocations[key] / total_other_weight
+            base = min_costs.get(key, 0)
+            available_surplus = max(
+                0, remaining_for_others - sum((min_costs[k] for k in other_components))
+            )
+            comp_budgets[key] = base + available_surplus * normalized_weight
+            logger.debug(f"Allocated {key} (Forced GPU): ₹{comp_budgets[key]:,.2f}")
+    else:
+        for key, weight in allocations.items():
+            base = 0 if key == "GPU" and skip_gpu_calc else min_costs.get(key, 0)
+            comp_budgets[key] = base + surplus * weight
+            logger.debug(f"Allocated {key}: ₹{comp_budgets[key]:,.2f}")
     build: dict[str, Component] = {}
     pref_cpu = (
         "Intel"
@@ -716,10 +821,13 @@ def get_recommendation_from_db(
     if not build["Case"]:
         logger.error("Failed to select Case")
         return None
-    all_gpus = gpus[pref_gpu] if pref_gpu else gpus["NVIDIA"] + gpus["AMD"]
-    selected_gpu = find_component(
-        all_gpus, tier, comp_budgets["GPU"], flexibility, "GPU"
-    )
+    if forced_gpu:
+        selected_gpu = forced_gpu
+    else:
+        all_gpus = gpus[pref_gpu] if pref_gpu else gpus["NVIDIA"] + gpus["AMD"]
+        selected_gpu = find_component(
+            all_gpus, tier, comp_budgets["GPU"], flexibility, "GPU"
+        )
     if not selected_gpu:
         if "Office Work" in use_cases and tier == 1:
             build["GPU"] = {

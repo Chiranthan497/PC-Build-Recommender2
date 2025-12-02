@@ -4,20 +4,18 @@ from app.state import PCBuilderState
 
 def code_evidence_section() -> rx.Component:
     code_snippet = """
-# Real Gemini API call with streaming
+# Real Gemini API call with streaming (from app/state.py)
 client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+# We use the latest Gemini 2.5 Flash model
 response_stream = client.models.generate_content_stream(
-    model="gemini-2.5-flash",
-    contents=prompt,
-    config=types.GenerateContentConfig(
-        temperature=0.7, 
-        max_output_tokens=1000
-    ),
+    model="gemini-2.5-flash", 
+    contents=prompt
 )
+# Token-by-token streaming update
 for chunk in response_stream:
     if chunk.text:
         self.streaming_text += chunk.text
-        yield  # Updates UI in real-time
+        yield  # Triggers UI update
 """
     return rx.el.div(
         rx.el.h2(
