@@ -72,12 +72,19 @@ class PCBuilderState(rx.State):
             self.is_demo_streaming = False
 
     @rx.event
-    def set_budget(self, value: str):
+    def set_budget(self, value: str | float | int):
         try:
-            self.budget = int(value) if value else 0
+            if not value:
+                self.budget = 0
+                return
+            self.budget = int(float(value))
         except (ValueError, TypeError) as e:
             logging.exception(f"Could not parse budget value '{value}': {e}")
             self.budget = 0
+
+    @rx.event
+    def set_other_requirements(self, value: str):
+        self.other_requirements = value
 
     @rx.event
     def toggle_use_case(self, use_case: str):
