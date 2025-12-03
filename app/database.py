@@ -57,12 +57,36 @@ cpus: dict[str, list[Component]] = {
             "reasoning": "A productivity and gaming beast that sits perfectly in the upper mid-range, offering overclocking support and high core counts.",
         },
         {
+            "name": "Intel Core Ultra 5 245K",
+            "price": 23000,
+            "tier": 2,
+            "compatibility_key": "LGA1851",
+            "spec": "14 Cores / 14 Threads",
+            "reasoning": "Latest Intel Core Ultra processor offering excellent efficiency and performance on the new LGA1851 platform.",
+        },
+        {
+            "name": "Intel Core Ultra 7 265K",
+            "price": 32000,
+            "tier": 3,
+            "compatibility_key": "LGA1851",
+            "spec": "20 Cores / 20 Threads",
+            "reasoning": "A high-performance Core Ultra chip perfect for demanding content creation and high-end gaming setups.",
+        },
+        {
             "name": "Intel Core i7-13700K",
             "price": 35000,
             "tier": 3,
             "compatibility_key": "LGA1700",
             "spec": "16 Cores / 24 Threads",
             "reasoning": "A powerhouse for high-end gaming and content creation, with high clock speeds and a significant core count for demanding tasks.",
+        },
+        {
+            "name": "Intel Core Ultra 9 285K",
+            "price": 48000,
+            "tier": 3,
+            "compatibility_key": "LGA1851",
+            "spec": "24 Cores / 24 Threads",
+            "reasoning": "The flagship Intel Ultra processor delivering massive multi-core performance for professional workloads and enthusiast gaming.",
         },
         {
             "name": "Intel Core i9-13900K",
@@ -139,12 +163,28 @@ cpus: dict[str, list[Component]] = {
             "reasoning": "Arguably the best gaming CPU available, thanks to its massive 3D V-Cache, which significantly boosts frame rates in many titles.",
         },
         {
+            "name": "AMD Ryzen 7 9800X3D",
+            "price": 38000,
+            "tier": 3,
+            "compatibility_key": "AM5",
+            "spec": "8 Cores / 16 Threads",
+            "reasoning": "The successor to the gaming king, offering even higher clock speeds and improved thermal performance for the ultimate gaming experience.",
+        },
+        {
             "name": "AMD Ryzen 9 7950X",
             "price": 48000,
             "tier": 3,
             "compatibility_key": "AM5",
             "spec": "16 Cores / 32 Threads",
             "reasoning": "The ultimate CPU for productivity on the AM5 platform, delivering exceptional multi-threaded performance for the most demanding applications.",
+        },
+        {
+            "name": "AMD Ryzen 9 9950X3D",
+            "price": 62000,
+            "tier": 3,
+            "compatibility_key": "AM5",
+            "spec": "16 Cores / 32 Threads",
+            "reasoning": "The absolute pinnacle of gaming and productivity performance combined, featuring next-gen 3D V-Cache technology.",
         },
     ],
 }
@@ -181,6 +221,24 @@ motherboards: dict[str, list[Component]] = {
             "compatibility_key": "DDR5",
             "spec": "Z790 Chipset",
             "reasoning": "A high-end Z790 motherboard with robust power delivery, Wi-Fi 6E, and overclocking support for enthusiast-grade Intel CPUs.",
+        },
+    ],
+    "LGA1851": [
+        {
+            "name": "MSI PRO Z890-P WIFI",
+            "price": 21000,
+            "tier": 2,
+            "compatibility_key": "DDR5",
+            "spec": "Z890 Chipset",
+            "reasoning": "A solid entry into the new LGA1851 platform for Intel Core Ultra processors, offering DDR5 and PCIe 5.0 support.",
+        },
+        {
+            "name": "ASUS ROG STRIX Z890-A GAMING WIFI",
+            "price": 35000,
+            "tier": 3,
+            "compatibility_key": "DDR5",
+            "spec": "Z890 Chipset",
+            "reasoning": "Premium Z890 motherboard with robust power delivery for high-end Core Ultra 7/9 chips and extensive connectivity options.",
         },
     ],
     "AM4": [
@@ -430,7 +488,7 @@ storages: list[Component] = [
         "price": 3000,
         "tier": 1,
         "compatibility_key": 500,
-        "spec": "500GB NVMe",
+        "spec": "500GB NVMe Gen3",
         "reasoning": "A fast NVMe SSD is essential for quick boot times and loading. 500GB is a good starting point for the OS and a few key applications/games.",
     },
     {
@@ -438,16 +496,24 @@ storages: list[Component] = [
         "price": 6000,
         "tier": 2,
         "compatibility_key": 1000,
-        "spec": "1TB NVMe",
+        "spec": "1TB NVMe Gen4",
         "reasoning": "1TB is the recommended capacity for most users, providing ample space for the OS, numerous games, and applications without compromising on speed.",
     },
     {
-        "name": "Samsung 980 Pro 2TB NVMe SSD",
-        "price": 14000,
+        "name": "Samsung 990 Pro 2TB NVMe SSD",
+        "price": 16500,
         "tier": 3,
         "compatibility_key": 2000,
         "spec": "2TB NVMe Gen4",
-        "reasoning": "A high-speed 2TB Gen4 drive for enthusiasts and professionals who need rapid access to large files, games, and projects.",
+        "reasoning": "One of the fastest Gen4 drives available, perfect for high-end builds where load times and transfer speeds are critical.",
+    },
+    {
+        "name": "Crucial T700 2TB Gen5 NVMe SSD",
+        "price": 22000,
+        "tier": 3,
+        "compatibility_key": 2000,
+        "spec": "2TB NVMe Gen5",
+        "reasoning": "Cutting-edge PCIe Gen5 storage offering blistering sequential speeds for future-proof builds and heavy workflow demands.",
     },
     {
         "name": "WD Black SN850X 4TB NVMe SSD",
@@ -619,6 +685,38 @@ def extract_gpu_preference(text: str) -> Optional[str]:
     return None
 
 
+def extract_cpu_preference(text: str) -> Optional[str]:
+    if not text:
+        return None
+    text = text.lower()
+    mappings = {
+        "9950x3d": "AMD Ryzen 9 9950X3D",
+        "9800x3d": "AMD Ryzen 7 9800X3D",
+        "7800x3d": "AMD Ryzen 7 7800X3D",
+        "ultra 9": "Intel Core Ultra 9 285K",
+        "ultra 7": "Intel Core Ultra 7 265K",
+        "ultra 5": "Intel Core Ultra 5 245K",
+        "13900k": "Intel Core i9-13900K",
+        "13700k": "Intel Core i7-13700K",
+        "13600k": "Intel Core i5-13600K",
+    }
+    for key in sorted(mappings.keys(), key=len, reverse=True):
+        if key in text:
+            return mappings[key]
+    return None
+
+
+def extract_storage_preference(text: str) -> Optional[str]:
+    if not text:
+        return None
+    text = text.lower()
+    if "gen 5" in text or "gen5" in text or "pcie 5" in text or ("pcie 5.0" in text):
+        return "Gen5"
+    if "gen 4" in text or "gen4" in text or "pcie 4" in text or ("pcie 4.0" in text):
+        return "Gen4"
+    return None
+
+
 def _get_component_price(component: Component) -> int:
     return component["price"]
 
@@ -681,32 +779,78 @@ def get_recommendation_from_db(
     surplus = max(0, budget - total_min_cost)
     logger.info(f"Min Cost: ₹{total_min_cost:,}, Surplus: ₹{surplus:,}")
     pref_gpu_name = extract_gpu_preference(other_reqs)
+    pref_cpu_name = extract_cpu_preference(other_reqs)
+    pref_storage_gen = extract_storage_preference(other_reqs)
     forced_gpu = None
+    forced_cpu = None
+    forced_storage = None
     if pref_gpu_name:
         all_gpus_flat = gpus["NVIDIA"] + gpus["AMD"]
         candidate = next((g for g in all_gpus_flat if g["name"] == pref_gpu_name), None)
         if candidate:
-            base_system_min_cost = total_min_cost - min_costs["GPU"]
-            strict_min_cost = base_system_min_cost
-            if candidate["tier"] >= 3:
-                strict_min_cost += 15000
-            elif candidate["tier"] == 2:
-                strict_min_cost += 8000
-            remaining_budget = budget - candidate["price"]
-            if remaining_budget >= strict_min_cost:
+            remaining_check = budget - candidate["price"]
+            if remaining_check >= total_min_cost - min_costs["GPU"]:
                 forced_gpu = candidate
+                logger.info(f"User preference detected: {forced_gpu['name']}")
+    if pref_cpu_name:
+        all_cpus_flat = cpus["Intel"] + cpus["AMD"]
+        candidate = next((c for c in all_cpus_flat if c["name"] == pref_cpu_name), None)
+        if candidate:
+            remaining_check = budget - candidate["price"]
+            if forced_gpu:
+                remaining_check -= forced_gpu["price"]
+            base_needed = (
+                total_min_cost
+                - min_costs["CPU"]
+                - (min_costs["GPU"] if forced_gpu else 0)
+            )
+            if remaining_check >= base_needed:
+                forced_cpu = candidate
+                logger.info(f"User preference detected: {forced_cpu['name']}")
+    if pref_storage_gen:
+        matches = [s for s in storages if pref_storage_gen in s["spec"]]
+        if matches:
+            candidate = min(matches, key=_get_component_price)
+            remaining_check = budget - candidate["price"]
+            if forced_gpu:
+                remaining_check -= forced_gpu["price"]
+            if forced_cpu:
+                remaining_check -= forced_cpu["price"]
+            base_needed = (
+                total_min_cost
+                - min_costs["STORAGE"]
+                - (min_costs["GPU"] if forced_gpu else 0)
+                - (min_costs["CPU"] if forced_cpu else 0)
+            )
+            if remaining_check >= base_needed:
+                forced_storage = candidate
                 logger.info(
-                    f"User preference honored (Balanced): Locking {forced_gpu['name']} (₹{forced_gpu['price']:,})"
+                    f"User preference detected: {forced_storage['name']} ({pref_storage_gen})"
                 )
-            elif remaining_budget >= base_system_min_cost:
-                forced_gpu = candidate
-                logger.info(
-                    f"User preference honored (Tight Budget): Locking {forced_gpu['name']} (₹{forced_gpu['price']:,}) - Squeezing other components"
-                )
-            else:
-                logger.warning(
-                    f"User requested {pref_gpu_name} but budget ₹{budget:,} is insufficient (Need ~₹{candidate['price'] + base_system_min_cost:,})"
-                )
+    used_by_forced = 0
+    if forced_gpu:
+        used_by_forced += forced_gpu["price"]
+    if forced_cpu:
+        used_by_forced += forced_cpu["price"]
+    if forced_storage:
+        used_by_forced += forced_storage["price"]
+    base_system_min_cost = total_min_cost
+    if forced_gpu:
+        base_system_min_cost -= min_costs["GPU"]
+    if forced_cpu:
+        base_system_min_cost -= min_costs["CPU"]
+    if forced_storage:
+        base_system_min_cost -= min_costs["STORAGE"]
+    remaining_budget = budget - used_by_forced
+    if remaining_budget < base_system_min_cost:
+        logger.warning(
+            f"Forced components exceed budget! Dropping preferences. (Req: ₹{used_by_forced + base_system_min_cost:,} vs Bud: ₹{budget:,})"
+        )
+        forced_gpu = None
+        forced_cpu = None
+        forced_storage = None
+    else:
+        logger.info("Preferences validated and locked.")
     allocations = {
         "GPU_Heavy": {
             "CPU": 0.2,
@@ -747,12 +891,29 @@ def get_recommendation_from_db(
     }[priority]
     flexibility = 1.25 if tier == 1 else 1.1
     comp_budgets = {}
+    forced_items_cost = 0
     if forced_gpu:
-        gpu_cost = forced_gpu["price"]
-        remaining_for_others = budget - gpu_cost
-        other_components = [k for k in allocations.keys() if k != "GPU"]
+        forced_items_cost += forced_gpu["price"]
+    if forced_cpu:
+        forced_items_cost += forced_cpu["price"]
+    if forced_storage:
+        forced_items_cost += forced_storage["price"]
+    if forced_items_cost > 0:
+        remaining_for_others = budget - forced_items_cost
+        other_components = [k for k in allocations.keys()]
+        if forced_gpu:
+            other_components.remove("GPU")
+        if forced_cpu:
+            other_components.remove("CPU")
+        if forced_storage:
+            other_components.remove("STORAGE")
         total_other_weight = sum((allocations[k] for k in other_components))
-        comp_budgets["GPU"] = gpu_cost
+        if forced_gpu:
+            comp_budgets["GPU"] = forced_gpu["price"]
+        if forced_cpu:
+            comp_budgets["CPU"] = forced_cpu["price"]
+        if forced_storage:
+            comp_budgets["STORAGE"] = forced_storage["price"]
         for key in other_components:
             normalized_weight = allocations[key] / total_other_weight
             base = min_costs.get(key, 0)
@@ -760,31 +921,38 @@ def get_recommendation_from_db(
                 0, remaining_for_others - sum((min_costs[k] for k in other_components))
             )
             comp_budgets[key] = base + available_surplus * normalized_weight
-            logger.debug(f"Allocated {key} (Forced GPU): ₹{comp_budgets[key]:,.2f}")
+            logger.debug(
+                f"Allocated {key} (Forced items active): ₹{comp_budgets[key]:,.2f}"
+            )
     else:
         for key, weight in allocations.items():
             base = 0 if key == "GPU" and skip_gpu_calc else min_costs.get(key, 0)
             comp_budgets[key] = base + surplus * weight
             logger.debug(f"Allocated {key}: ₹{comp_budgets[key]:,.2f}")
     build: dict[str, Component] = {}
-    pref_cpu = (
+    pref_cpu_brand = (
         "Intel"
         if "intel" in other_reqs.lower()
         else "AMD"
         if "amd" in other_reqs.lower()
         else None
     )
-    pref_gpu = (
+    pref_gpu_brand = (
         "NVIDIA"
         if "nvidia" in other_reqs.lower()
         else "AMD"
         if "amd" in other_reqs.lower()
         else None
     )
-    all_cpus = cpus[pref_cpu] if pref_cpu else cpus["Intel"] + cpus["AMD"]
-    selected_cpu = find_component(
-        all_cpus, tier, comp_budgets["CPU"], flexibility, "CPU"
-    )
+    if forced_cpu:
+        selected_cpu = forced_cpu
+    else:
+        all_cpus = (
+            cpus[pref_cpu_brand] if pref_cpu_brand else cpus["Intel"] + cpus["AMD"]
+        )
+        selected_cpu = find_component(
+            all_cpus, tier, comp_budgets["CPU"], flexibility, "CPU"
+        )
     if not selected_cpu:
         logger.error("Failed to select CPU")
         return None
@@ -809,9 +977,21 @@ def get_recommendation_from_db(
         )
         return None
     build["RAM"] = selected_ram
-    build["Storage"] = find_component(
-        storages, tier, comp_budgets["STORAGE"], flexibility, "Storage"
-    )
+    if forced_storage:
+        build["Storage"] = forced_storage
+    else:
+        candidates = storages
+        if pref_storage_gen and (not forced_storage):
+            gen_candidates = [s for s in storages if pref_storage_gen in s["spec"]]
+            if gen_candidates:
+                candidates = gen_candidates
+        build["Storage"] = find_component(
+            candidates, tier, comp_budgets["STORAGE"], flexibility, "Storage"
+        )
+        if not build["Storage"] and candidates != storages:
+            build["Storage"] = find_component(
+                storages, tier, comp_budgets["STORAGE"], flexibility, "Storage"
+            )
     if not build["Storage"]:
         logger.error("Failed to select Storage")
         return None
@@ -824,7 +1004,9 @@ def get_recommendation_from_db(
     if forced_gpu:
         selected_gpu = forced_gpu
     else:
-        all_gpus = gpus[pref_gpu] if pref_gpu else gpus["NVIDIA"] + gpus["AMD"]
+        all_gpus = (
+            gpus[pref_gpu_brand] if pref_gpu_brand else gpus["NVIDIA"] + gpus["AMD"]
+        )
         selected_gpu = find_component(
             all_gpus, tier, comp_budgets["GPU"], flexibility, "GPU"
         )
