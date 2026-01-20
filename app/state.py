@@ -278,6 +278,7 @@ class PCBuilderState(rx.State):
         self.streaming_text = ""
         yield
         models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash"]
+        quota_exceeded = False
         try:
             api_key = os.getenv("GOOGLE_API_KEY")
             if not api_key:
@@ -308,6 +309,16 @@ class PCBuilderState(rx.State):
                         )
                 except Exception as stream_err:
                     error_msg = str(stream_err)
+                    if (
+                        "429" in error_msg
+                        or "RESOURCE_EXHAUSTED" in error_msg
+                        or "quota" in error_msg.lower()
+                    ):
+                        logging.warning(
+                            f"Quota exceeded with {model_name}. Stopping retries."
+                        )
+                        quota_exceeded = True
+                        break
                     is_overloaded = (
                         "503" in error_msg
                         or "overloaded" in error_msg.lower()
@@ -323,7 +334,7 @@ class PCBuilderState(rx.State):
                             f"Gemini Streaming failed with {model_name}: {stream_err}."
                         )
                         continue
-            if not streaming_succeeded:
+            if not streaming_succeeded and (not quota_exceeded):
                 fallback_model = models_to_try[0]
                 logging.info(
                     f"All streaming attempts failed. Executing non-streaming fallback request to {fallback_model}..."
@@ -345,11 +356,21 @@ class PCBuilderState(rx.State):
                     else:
                         logging.error("Gemini Non-Streaming also returned empty text.")
                 except Exception as e:
+                    error_msg = str(e)
+                    if (
+                        "429" in error_msg
+                        or "RESOURCE_EXHAUSTED" in error_msg
+                        or "quota" in error_msg.lower()
+                    ):
+                        quota_exceeded = True
                     logging.exception(f"Non-streaming fallback failed: {e}")
             if not streaming_succeeded:
-                raise ValueError(
-                    "All AI generation attempts (streaming and non-streaming) failed."
-                )
+                if quota_exceeded:
+                    raise ValueError("429 RESOURCE_EXHAUSTED: Quota exceeded.")
+                else:
+                    raise ValueError(
+                        "All AI generation attempts (streaming and non-streaming) failed."
+                    )
             self.stream_complete = True
             self.is_streaming = False
             yield rx.toast.success(
