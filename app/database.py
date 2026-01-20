@@ -1060,7 +1060,7 @@ def get_recommendation_from_db(
         logger.error(f"Failed to select PSU (Req: {psu_wattage_req}W)")
         return None
     build["PSU"] = selected_psu
-    build = optimize_build(build, budget, priority, pref_cpu, pref_gpu)
+    build = optimize_build(build, budget, priority, pref_cpu_brand, pref_gpu_brand)
     logger.info("Build generation successful!")
     return build
 
