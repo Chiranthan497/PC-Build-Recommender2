@@ -10,6 +10,7 @@ from app.database import (
 )
 import time
 import logging
+import asyncio
 
 
 class PCBuilderState(rx.State):
@@ -33,6 +34,7 @@ class PCBuilderState(rx.State):
     error_message: str = ""
     demo_output: str = ""
     is_demo_streaming: bool = False
+    _last_quota_exceeded_time: float = 0.0
 
     @rx.var
     def masked_api_key(self) -> str:
@@ -44,7 +46,7 @@ class PCBuilderState(rx.State):
         return "Configured (Unknown Format) ✅"
 
     @rx.event
-    def start_demo_stream(self):
+    async def start_demo_stream(self):
         self.is_demo_streaming = True
         self.demo_output = ""
         yield
@@ -63,8 +65,10 @@ class PCBuilderState(rx.State):
             last_error = ""
             for model_name in models_to_try:
                 try:
-                    response_stream = client.models.generate_content_stream(
-                        model=model_name, contents=prompt
+                    response_stream = await asyncio.to_thread(
+                        client.models.generate_content_stream,
+                        model=model_name,
+                        contents=prompt,
                     )
                     chunk_count = 0
                     for chunk in response_stream:
@@ -72,6 +76,7 @@ class PCBuilderState(rx.State):
                             self.demo_output += chunk.text
                             chunk_count += 1
                             yield
+                        await asyncio.sleep(0.01)
                     if chunk_count > 0:
                         success = True
                         break
@@ -272,147 +277,132 @@ class PCBuilderState(rx.State):
             self.is_loading = False
             yield rx.toast.error(self.error_message)
 
-    @rx.event
-    def stream_gemini_analysis(self):
-        self.is_streaming = True
-        self.streaming_text = ""
+    @rx.event(background=True)
+    async def stream_gemini_analysis(self):
+        async with self:
+            self.is_streaming = True
+            self.streaming_text = ""
         yield
-        models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash"]
-        quota_exceeded = False
+        if time.time() - self._last_quota_exceeded_time < 300:
+            logging.warning("Skipping Gemini API due to recent quota exhaustion.")
+            yield rx.toast.warning(
+                "AI usage quota exceeded (Free Tier). Using expert analysis.",
+                duration=5000,
+            )
+            async with self:
+                self.full_explanation = self._generate_comprehensive_explanation()
+            words = self.full_explanation.split()
+            for i, word in enumerate(words):
+                async with self:
+                    self.streaming_text += word + " "
+                if i % 2 == 0:
+                    yield
+                await asyncio.sleep(0.005)
+            async with self:
+                self.is_streaming = False
+                self.stream_complete = True
+            return
         try:
             api_key = os.getenv("GOOGLE_API_KEY")
             if not api_key:
-                raise ValueError("No Google API Key configured.")
+                raise ValueError("No API Key")
             client = genai.Client(api_key=api_key)
             build_str = """
-""".join([f"{k}: {v['name']} - {v['spec']}" for k, v in self.recommendation.items()])
-            prompt = f"\n            Act as a professional PC Builder AI Expert.\n            I have selected the following components for a user with these requirements:\n            \n            Budget: ₹{self.budget:,}\n            Use Cases: {', '.join(self.use_cases)}\n            Other Requirements: {self.other_requirements or 'None'}\n            \n            Selected Build Components:\n            {build_str}\n            \n            Please provide a comprehensive, professional analysis of this PC build.\n            Structure your response in clean Markdown.\n            \n            You MUST include these specific sections:\n            1. **Build Strengths & Focus**: Analyze how this specific configuration fits the user's stated use cases.\n            2. **Important Considerations**: Mention any potential bottlenecks, caveats, or things the user should know. \n               CRITICAL: Check 'Other Requirements' for user requests (specific GPU like 'RTX 5090', CPU like '9800X3D', or 'Gen 5 SSD'). \n               - If the user's requested component IS in the 'Selected Build Components', explicitly mention that you have successfully included their preference.\n               - If the user's requested component is MISSING, explain politely that it didn't fit within the ₹{self.budget:,} budget without compromising system stability, and explain why the selected alternative is excellent.\n            3. **Future Upgrade Recommendations**: Suggest logical next steps for upgrading this specific rig.\n            4. **Detailed Component Analysis**: Briefly explain why these specific parts work well together (synergy between CPU/GPU/RAM).\n            \n            Keep the tone professional, helpful, and enthusiastic. Mention specific performance expectations (FPS estimates, rendering speeds, etc.) relevant to the use cases.\n            Focus on analyzing the *given* build, justifying the choices made by the builder algorithm.\n            "
-            streaming_succeeded = False
-            for model_name in models_to_try:
-                try:
-                    logging.info(f"Attempting AI analysis with model: {model_name}")
-                    response_stream = client.models.generate_content_stream(
-                        model=model_name, contents=prompt
-                    )
-                    chunk_count = 0
-                    for chunk in response_stream:
-                        if chunk.text:
-                            self.streaming_text += chunk.text
-                            chunk_count += 1
-                            yield
-                    if chunk_count > 0:
-                        streaming_succeeded = True
-                        break
-                    else:
-                        logging.warning(
-                            f"Gemini Streaming returned 0 chunks with {model_name}."
-                        )
-                except Exception as stream_err:
-                    error_msg = str(stream_err)
-                    if (
-                        "429" in error_msg
-                        or "RESOURCE_EXHAUSTED" in error_msg
-                        or "quota" in error_msg.lower()
-                    ):
-                        logging.warning(
-                            f"Quota exceeded with {model_name}. Stopping retries."
-                        )
-                        quota_exceeded = True
-                        break
-                    is_overloaded = (
-                        "503" in error_msg
-                        or "overloaded" in error_msg.lower()
-                        or "UNAVAILABLE" in error_msg
-                    )
-                    if is_overloaded:
-                        logging.warning(
-                            f"Model {model_name} overloaded (503). Trying next model if available..."
-                        )
-                        continue
-                    else:
-                        logging.exception(
-                            f"Gemini Streaming failed with {model_name}: {stream_err}."
-                        )
-                        continue
-            if not streaming_succeeded and (not quota_exceeded):
-                fallback_model = models_to_try[0]
-                logging.info(
-                    f"All streaming attempts failed. Executing non-streaming fallback request to {fallback_model}..."
-                )
-                try:
-                    response = client.models.generate_content(
-                        model=fallback_model, contents=prompt
-                    )
-                    if response.text:
-                        full_response_text = response.text
-                        self.streaming_text = ""
-                        words = full_response_text.split(" ")
-                        for i, word in enumerate(words):
-                            self.streaming_text += word + " "
-                            if i % 3 == 0:
-                                yield
-                            time.sleep(0.01)
-                        streaming_succeeded = True
-                    else:
-                        logging.error("Gemini Non-Streaming also returned empty text.")
-                except Exception as e:
-                    error_msg = str(e)
-                    if (
-                        "429" in error_msg
-                        or "RESOURCE_EXHAUSTED" in error_msg
-                        or "quota" in error_msg.lower()
-                    ):
-                        quota_exceeded = True
-                    logging.exception(f"Non-streaming fallback failed: {e}")
-            if not streaming_succeeded:
-                if quota_exceeded:
-                    raise ValueError("429 RESOURCE_EXHAUSTED: Quota exceeded.")
-                else:
-                    raise ValueError(
-                        "All AI generation attempts (streaming and non-streaming) failed."
-                    )
-            self.stream_complete = True
-            self.is_streaming = False
-            yield rx.toast.success(
-                "AI analysis complete! Your custom PC configuration is ready."
+""".join([f"{k}: {v['name']}" for k, v in self.recommendation.items()])
+            prompt = f"Analyze this PC build for budget ₹{self.budget:,} and use cases {', '.join(self.use_cases)}. Requirements: {self.other_requirements}. Build: {build_str}. Include Strengths, Considerations, and Upgrade paths in Markdown."
+            response_stream = await asyncio.wait_for(
+                asyncio.to_thread(
+                    client.models.generate_content_stream,
+                    model="gemini-2.5-flash",
+                    contents=prompt,
+                ),
+                timeout=8.0,
             )
-        except Exception as e:
-            logging.exception(f"Gemini API Error (All attempts failed): {e}")
+            chunk_count = 0
+            iterator = iter(response_stream)
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(
+                        asyncio.to_thread(next, iterator), timeout=2.0
+                    )
+                    if chunk.text:
+                        async with self:
+                            self.streaming_text += chunk.text
+                        chunk_count += 1
+                        yield
+                except StopIteration:
+                    logging.exception("Gemini stream iterator reached end naturally.")
+                    break
+                except (asyncio.TimeoutError, TimeoutError):
+                    logging.exception("Chunk streaming timed out. Falling back.")
+                    raise asyncio.TimeoutError("Chunk timeout")
+            if chunk_count == 0:
+                raise ValueError("No data received")
+            async with self:
+                self.stream_complete = True
+                self.is_streaming = False
+            yield rx.toast.success("AI analysis complete!")
+        except (Exception, asyncio.TimeoutError, TimeoutError) as e:
+            logging.exception(
+                f"FALLBACK TRIGGERED: Gemini failed with {type(e).__name__}: {e}"
+            )
             error_msg = str(e)
-            user_msg = "AI connection failed. Switching to Rule-Based Expert Analysis."
-            if (
-                "429" in error_msg
-                or "quota" in error_msg.lower()
-                or "RESOURCE_EXHAUSTED" in error_msg
+            user_msg = "AI connection unavailable. Using Rule-Based Expert Analysis."
+            if any(
+                (q in error_msg.lower() for q in ["429", "quota", "resource_exhausted"])
             ):
-                user_msg = "AI usage quota exceeded (Free Tier). Switching to Rule-Based Expert Analysis..."
-            elif "503" in error_msg or "overloaded" in error_msg.lower():
-                user_msg = "AI models are currently overloaded. Switching to Rule-Based Expert Analysis..."
+                user_msg = (
+                    "AI usage quota exceeded. Using Rule-Based Expert Analysis..."
+                )
+                async with self:
+                    self._last_quota_exceeded_time = time.time()
+            elif any(
+                (o in error_msg.lower() for o in ["503", "overloaded", "unavailable"])
+            ):
+                user_msg = (
+                    "AI models are currently overloaded. Using Expert Analysis..."
+                )
+            elif "timeout" in error_msg.lower() or "time out" in error_msg.lower():
+                user_msg = "AI connection timed out. Using Expert Analysis..."
             yield rx.toast.warning(user_msg, duration=5000)
-            self.streaming_text = ""
-            self.full_explanation = self._generate_comprehensive_explanation()
-            yield PCBuilderState.stream_simulated_explanation
+            async with self:
+                self.streaming_text = ""
+                self.full_explanation = self._generate_comprehensive_explanation()
+                self.is_streaming = True
+            words = self.full_explanation.split()
+            for i, word in enumerate(words):
+                async with self:
+                    self.streaming_text += word + " "
+                if i % 3 == 0:
+                    yield
+                await asyncio.sleep(0.005)
+            async with self:
+                self.is_streaming = False
+                self.stream_complete = True
 
-    @rx.event
-    def stream_simulated_explanation(self):
-        self.is_streaming = True
-        self.streaming_text = ""
+    @rx.event(background=True)
+    async def stream_simulated_explanation(self):
+        async with self:
+            self.is_streaming = True
+            self.streaming_text = ""
         yield
         words = self.full_explanation.split()
         for i, word in enumerate(words):
-            self.streaming_text += word + " "
+            async with self:
+                self.streaming_text += word + " "
             if word.endswith((".", "!", "?")):
-                time.sleep(0.08)
+                await asyncio.sleep(0.02)
             elif word.endswith((",", ":")):
-                time.sleep(0.05)
+                await asyncio.sleep(0.015)
             elif word.startswith("**") and word.endswith("**"):
-                time.sleep(0.03)
+                await asyncio.sleep(0.01)
             else:
-                time.sleep(0.025)
-            if i % 3 == 0:
+                await asyncio.sleep(0.005)
+            if i % 2 == 0:
                 yield
-        self.is_streaming = False
-        self.stream_complete = True
+        async with self:
+            self.is_streaming = False
+            self.stream_complete = True
         yield rx.toast.success(
             "Build analysis complete! Your custom PC configuration is ready."
         )
